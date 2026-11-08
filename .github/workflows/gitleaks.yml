@@ -1,0 +1,91 @@
+name: Gitleaks
+
+# Procura segredo (chave, token, senha) nos commits. Plano de segurança do MARINHO, 08/11.
+# Sem action de terceiros: o binário oficial do gitleaks, fixado pela versão e pela soma SHA-256 do pacote.
+# O relatório sai com --redact (o segredo não aparece no log) e não vira artefato.
+# Falso positivo: a linha ganha "# gitleaks:allow" ou o fingerprint vai no .gitleaksignore, com o motivo no PR.
+# Trocar a versão: atualizar GITLEAKS_VERSAO e GITLEAKS_SHA256 juntos (gitleaks_<versão>_checksums.txt da release).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 6 1 * *" # dia 1 de cada mês, 03h17 de Brasília: o histórico inteiro (mensal, para gastar menos minutos)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSAO: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  # O mesmo pacote pela API de releases (id do asset gitleaks_8.30.1_linux_x64.tar.gz): plano B quando o endereço
+  # público da release dá 504, como em 08/11. Trocar junto com a versão: gh api repos/gitleaks/gitleaks/releases/tags/v<versão>.
+  GITLEAKS_ASSET_ID: "378332058"
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar o código (histórico inteiro, sem guardar a credencial)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # O pacote fica em cache pela versão e pela soma. Ele é conferido pelo SHA-256 a cada uso, então um cache
+      # mexido (de um PR, por exemplo) nunca roda: cai no download e na mesma conferência.
+      - name: Cache do pacote do gitleaks
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/marinho-gitleaks
+          key: gitleaks-${{ env.GITLEAKS_VERSAO }}-${{ env.GITLEAKS_SHA256 }}
+
+      - name: Instalar o gitleaks conferido
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$HOME/.cache/marinho-gitleaks"; t="$d/gitleaks.tgz"; mkdir -p "$d"
+          confere() { [ -s "$t" ] && echo "${GITLEAKS_SHA256}  $t" | sha256sum -c --status -; }
+          if confere; then
+            echo "pacote do cache, conferido"
+          else
+            rm -f "$t"
+            url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSAO}/gitleaks_${GITLEAKS_VERSAO}_linux_x64.tar.gz"
+            # 1º o endereço público da release; se ele falhar (504 em 08/11), o mesmo pacote pela API de releases.
+            curl -fsSL --retry 4 --retry-delay 5 --retry-all-errors -o "$t" "$url" \
+              || curl -fsSL --retry 4 --retry-delay 5 --retry-all-errors -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/octet-stream" -o "$t" \
+                   "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/${GITLEAKS_ASSET_ID}"
+          fi
+          echo "${GITLEAKS_SHA256}  $t" | sha256sum -c -
+          tar -xzf "$t" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Procurar segredos
+        env:
+          EVENTO: ${{ github.event_name }}
+          BASE_PR: ${{ github.event.pull_request.base.sha }}
+          TOPO_PR: ${{ github.event.pull_request.head.sha }}
+          ANTES: ${{ github.event.before }}
+          DEPOIS: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # PR: só os commits do PR; push: só os novos; semana ou à mão: o histórico inteiro.
+          intervalo="--all"
+          if [ "$EVENTO" = pull_request ]; then
+            intervalo="${BASE_PR}..${TOPO_PR}"
+          elif [ "$EVENTO" = push ] && [ -n "$ANTES" ] && [ "$ANTES" != 0000000000000000000000000000000000000000 ] \
+            && git cat-file -e "${ANTES}^{commit}" 2>/dev/null; then
+            intervalo="${ANTES}..${DEPOIS}"
+          fi
+          echo "intervalo: $intervalo"
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 --log-opts="$intervalo" .

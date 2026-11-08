@@ -1,0 +1,5 @@
+# Achados do gitleaks no histórico herdado do projeto original (NOALBS, 2019): exemplos do README e um config de
+# exemplo do autor original; nada do MARINHO. Conferido pelo Nuvem Geral em 08/11.
+c1d82bab38770436d30659abf7d3aaae14927c5e:README.md:generic-api-key:767
+2ec4bb6290bcdc8f2e22748367f07e648112c4b7:README.md:generic-api-key:200
+20d14bb0fdafda69b7ef4a4bf0d49a2def980a39:config.json:generic-api-key:19
