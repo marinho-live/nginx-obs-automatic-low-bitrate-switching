@@ -1,0 +1,15 @@
+# Dependabot só de segurança (Nuvem Geral, 08/11, decisão do Coordenador Nuvem): open-pull-requests-limit 0
+# desliga os PRs de versão, para não gastar minutos; as correções de falha de segurança (ligadas no repositório)
+# seguem chegando, com a checagem semanal.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
